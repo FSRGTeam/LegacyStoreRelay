@@ -383,14 +383,17 @@ class Studio(Adw.ApplicationWindow):
 
         words = Adw.PreferencesGroup(
             title="Слова автора",
-            description="То, что увидят на баннере. Длиннее 130 символов "
-                        "обрезается при сборке.")
+            description="Цитата идёт на баннер, описание — в карточку. "
+                        "Цитата длиннее 130 символов обрезается при сборке.")
         quote = Adw.EntryRow(title="Цитата")
         quote.set_text(card.get("quote", "") or "")
         words.add(quote)
         by = Adw.EntryRow(title="Подпись")
         by.set_text(card.get("by", "") or "")
         words.add(by)
+        desc = Adw.EntryRow(title="Описание приложения")
+        desc.set_text(card.get("desc", "") or "")
+        words.add(desc)
         page.add(words)
 
         shots_group = Adw.PreferencesGroup(title="Скриншоты")
@@ -457,6 +460,7 @@ class Studio(Adw.ApplicationWindow):
             card["note"] = note.get_text().strip()
             card["quote"] = " ".join(quote.get_text().split())
             card["by"] = by.get_text().strip()
+            card["desc"] = desc.get_text().strip()
             card["shots"] = state["shots"]
             try:
                 card["issue"] = int(issue.get_text().strip() or 0)
@@ -527,6 +531,8 @@ class Studio(Adw.ApplicationWindow):
         words.add(self.quote_entry)
         self.by_entry = Adw.EntryRow(title="Подпись")
         words.add(self.by_entry)
+        self.desc_entry = Adw.EntryRow(title="Описание приложения")
+        words.add(self.desc_entry)
         page.add(words)
 
         extra = Adw.PreferencesGroup(title="Дополнительно")
@@ -808,6 +814,7 @@ class Studio(Adw.ApplicationWindow):
                             ("--author", self.author_entry.get_text().strip()),
                             ("--quote", self.quote_entry.get_text().strip()),
                             ("--by", self.by_entry.get_text().strip()),
+                            ("--desc", self.desc_entry.get_text().strip()),
                             ("--issue", self.issue_entry.get_text().strip())):
             if value:
                 args += [flag, value]

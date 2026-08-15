@@ -113,6 +113,9 @@ def write_catalog(shard_path, base_url):
             ",".join(absolute(s, base_url) for s in (a.get("shots") or [])),
             (a.get("quote") or "").replace("\t", " "),
             (a.get("by") or "").replace("\t", " "),
+            # Переносы строк в TSV невозможны, поэтому абзацы едут символом
+            # \u2028 и разворачиваются обратно на устройстве.
+            (a.get("desc") or "").replace("\t", " ").replace("\n", "\u2028"),
         ]))
     out = os.path.join(shard_path, "catalog.tsv")
     with open(out, "w", encoding="utf-8") as f:
@@ -139,6 +142,8 @@ def main():
                     help="слова автора для баннера (одна-две строки)")
     ap.add_argument("--by", default="", metavar="ПОДПИСЬ",
                     help="кто это сказал: имя или команда")
+    ap.add_argument("--desc", default="", metavar="ТЕКСТ",
+                    help="описание приложения словами автора")
     args = ap.parse_args()
 
     path = shard_dir(args.shard)
@@ -199,6 +204,7 @@ def main():
             "shots": shots,
             "quote": quote,
             "by": args.by,
+            "desc": " ".join(args.desc.split()),
             "title": facts["title"],
             "version": facts["version"],
             "minOS": facts["minOS"],

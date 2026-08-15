@@ -82,6 +82,7 @@ def write_catalog(shard_path, base_url):
             "",                                   # no Apple rating, ever
             icon,
             a.get("sha256", ""),
+            a.get("author", ""),
         ]))
     out = os.path.join(shard_path, "catalog.tsv")
     with open(out, "w", encoding="utf-8") as f:

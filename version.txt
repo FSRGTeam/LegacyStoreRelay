@@ -1,7 +1,7 @@
-generation=7
-updated=2026-08-15T19:52:35Z
-catalog_sha256=1ac872f9af856cdb4060e26ad4f5d0b5107cf0c02c9a90f0aafa2c23fcec99e2
-catalog_bytes=655
+generation=8
+updated=2026-08-15T20:04:26Z
+catalog_sha256=eb573df2007ff9a3b013ba9cf55109e39dc41ec596f9d68b70b802f73c9efe19
+catalog_bytes=512
 shards=1
-featured_sha256=8a873827d05b03a22215d540e2a091fc715058ad6a9cc1cf0ba8bbf32679f120
+featured_sha256=8726ba76bea2dca275e8199be5b279846b1484db6ff9d2cab833781286911225
 featured_count=1

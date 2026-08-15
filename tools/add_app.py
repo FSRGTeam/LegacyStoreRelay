@@ -50,12 +50,39 @@ def shard_dir(shard):
     return os.path.join(os.path.dirname(HERE), "LegacyStore" + shard)
 
 
+# Screenshots are the author's, not something that can be pulled out of an
+# .ipa — a bundle carries no marketing shots. A local file is copied into the
+# shard and served from Pages; a URL is trusted as given, which is how an app
+# already listed on the App Store can point at Apple's CDN over plain http.
+def collect_shots(shard_path, bundle, sources):
+    out = []
+    if not sources:
+        return out
+    dest_dir = os.path.join(shard_path, "shots", bundle)
+    for i, src in enumerate(sources, 1):
+        if src.startswith("http://") or src.startswith("https://"):
+            out.append(src)
+            continue
+        if not os.path.isfile(src):
+            print("нет файла скриншота: %s" % src, file=sys.stderr)
+            continue
+        os.makedirs(dest_dir, exist_ok=True)
+        ext = os.path.splitext(src)[1].lower() or ".jpg"
+        rel = "shots/%s/%d%s" % (bundle, i, ext)
+        shutil.copyfile(src, os.path.join(shard_path, rel))
+        out.append(rel)
+    return out
+
+
 def write_catalog(shard_path, base_url):
     """Rebuild the shard's catalog.tsv from its app cards.
 
     Regenerated wholesale rather than appended to, so a card edited by hand is
     always what ends up in the catalog.
     """
+    def absolute(u, base):
+        return u if u.startswith("http") else base.rstrip("/") + "/" + u.lstrip("/")
+
     apps_dir = os.path.join(shard_path, "apps")
     rows = []
     for name in sorted(os.listdir(apps_dir)):
@@ -83,6 +110,7 @@ def write_catalog(shard_path, base_url):
             icon,
             a.get("sha256", ""),
             a.get("author", ""),
+            ",".join(absolute(s, base_url) for s in (a.get("shots") or [])),
         ]))
     out = os.path.join(shard_path, "catalog.tsv")
     with open(out, "w", encoding="utf-8") as f:
@@ -102,6 +130,9 @@ def main():
     ap.add_argument("--note", default="")
     ap.add_argument("--keep", action="store_true",
                     help="положить .ipa в шард (files/) вместо ссылки автора")
+    ap.add_argument("--shot", action="append", default=[], metavar="ПУТЬ|URL",
+                    help="скриншот: локальный файл кладётся в шард, ссылка "
+                         "берётся как есть. Можно повторять.")
     args = ap.parse_args()
 
     path = shard_dir(args.shard)
@@ -145,8 +176,13 @@ def main():
             url = rel
             print("файл положен в шард: %s" % rel)
 
+        shots = collect_shots(path, bundle, args.shot)
+        if shots:
+            print("скриншотов: %d" % len(shots))
+
         card = {
             "bundleId": bundle,
+            "shots": shots,
             "title": facts["title"],
             "version": facts["version"],
             "minOS": facts["minOS"],

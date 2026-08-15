@@ -144,6 +144,8 @@ def main():
                     help="кто это сказал: имя или команда")
     ap.add_argument("--desc", default="", metavar="ТЕКСТ",
                     help="описание приложения словами автора")
+    ap.add_argument("--icon", default="", metavar="ПУТЬ",
+                    help="своя иконка вместо вынутой из бандла")
     args = ap.parse_args()
 
     path = shard_dir(args.shard)
@@ -170,7 +172,19 @@ def main():
                  facts["minOS"], facts["size"] / 1048576.0))
 
         icon_rel = ""
-        if facts["iconEntry"]:
+        # Своя иконка бьёт вынутую из бандла: в старых сборках она бывает
+        # только 57×57, а магазин рисует её на 128 точках при удвоенной
+        # плотности — то есть растягивает вчетверо.
+        if args.icon:
+            if not os.path.isfile(args.icon):
+                print("нет файла иконки: %s" % args.icon, file=sys.stderr)
+                return 1
+            os.makedirs(os.path.join(path, "icons"), exist_ok=True)
+            ext = os.path.splitext(args.icon)[1].lower() or ".png"
+            icon_rel = "icons/%s%s" % (bundle, ext)
+            shutil.copyfile(args.icon, os.path.join(path, icon_rel))
+            print("иконка своя: %s" % icon_rel)
+        elif facts["iconEntry"]:
             os.makedirs(os.path.join(path, "icons"), exist_ok=True)
             ext = os.path.splitext(facts["iconEntry"])[1] or ".png"
             icon_rel = "icons/%s%s" % (bundle, ext)

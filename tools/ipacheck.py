@@ -21,6 +21,9 @@ import struct
 import sys
 import zipfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from iosimage import png_size          # noqa: E402
+
 # Mach-O cpu subtypes we care about, all under CPU_TYPE_ARM (12).
 ARM_SUBTYPES = {6: "armv6", 9: "armv7", 11: "armv7s"}
 FAT_MAGIC = 0xCAFEBABE
@@ -239,11 +242,16 @@ def inspect(path, expect_bundle=None, max_min_os=60103):
 
 
 def _icon_name(info, zf, root):
-    """Best icon inside the bundle, largest first. Returned as a zip entry.
+    """Самая крупная иконка приложения. Возвращается путь внутри архива.
 
-    The PNGs are left exactly as they are, never re-encoded: iOS ships them in
-    Apple's CgBI variant, which desktop image libraries cannot read but the
-    device decodes natively.
+    Выбор по имени не работает: в бандле лежат и Icon.png на 57 точек, и
+    Icon-167.png, и Icon-60@3x.png — а порядок в CFBundleIconFiles ничего не
+    говорит о размере. Магазин показывает иконку на 128 точек при удвоенной
+    плотности, поэтому берётся самая большая, и это разница между чёткой
+    картинкой и мылом.
+
+    Файлы не перекодируются: iOS хранит их в варианте CgBI, который десктопные
+    библиотеки не читают, а устройство декодирует нативно.
     """
     names = []
     icons = info.get("CFBundleIcons")
@@ -254,15 +262,33 @@ def _icon_name(info, zf, root):
     names += list(info.get("CFBundleIconFiles") or [])
     if info.get("CFBundleIconFile"):
         names.append(info["CFBundleIconFile"])
-    names += ["Icon-72@2x", "Icon@2x", "Icon-72", "Icon", "icon"]
 
     entries = set(zf.namelist())
-    for base in reversed(names):          # @2x variants tend to come last
-        for cand in (base + "@2x.png", base + ".png", base):
-            entry = root + cand
-            if entry in entries:
-                return entry
-    return None
+    candidates = set()
+    for base in names:
+        for cand in (base, base + ".png", base + "@2x.png", base + "@3x.png"):
+            if root + cand in entries:
+                candidates.add(root + cand)
+
+    # Плюс всё, что в корне бандла названо иконкой: у приложений вроде этого
+    # половина размеров в Info.plist не перечислена вовсе.
+    for entry in entries:
+        rest = entry[len(root):] if entry.startswith(root) else ""
+        if "/" in rest or not rest.lower().endswith(".png"):
+            continue
+        low = rest.lower()
+        if low.startswith("icon") and "-small" not in low:
+            candidates.add(entry)
+
+    best, best_area = None, 0
+    for entry in candidates:
+        size = png_size(zf.read(entry))
+        if not size:
+            continue
+        area = size[0] * size[1]
+        if area > best_area:
+            best, best_area = entry, area
+    return best
 
 
 def main():

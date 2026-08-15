@@ -396,6 +396,38 @@ class Studio(Adw.ApplicationWindow):
         words.add(desc)
         page.add(words)
 
+        icon_group = Adw.PreferencesGroup(title="Иконка")
+        icon_rel = card.get("icon") or ""
+        icon_full = (os.path.join(shard_path, icon_rel)
+                     if icon_rel and not icon_rel.startswith("http") else None)
+        icon_row = Adw.ActionRow(title="Текущая", subtitle=icon_rel or "нет")
+        icon_row.add_prefix(icon_image(icon_full, 48))
+
+        def replace_icon(_b):
+            fd = Gtk.FileDialog(title="Новая иконка для " + bid)
+
+            def done(d, res):
+                try:
+                    f = d.open_finish(res)
+                except GLib.Error:
+                    return
+                src = f.get_path()
+                os.makedirs(os.path.join(shard_path, "icons"), exist_ok=True)
+                ext = os.path.splitext(src)[1].lower() or ".png"
+                rel = "icons/%s%s" % (bid, ext)
+                shutil.copyfile(src, os.path.join(shard_path, rel))
+                card["icon"] = rel
+                icon_row.set_subtitle(rel + " — сохраните карточку")
+                icon_row.remove(icon_row.get_first_child())
+                icon_row.add_prefix(icon_image(os.path.join(shard_path, rel), 48))
+            fd.open(self, None, done)
+
+        replace = Gtk.Button(label="Заменить", valign=Gtk.Align.CENTER)
+        replace.connect("clicked", replace_icon)
+        icon_row.add_suffix(replace)
+        icon_group.add(icon_row)
+        page.add(icon_group)
+
         shots_group = Adw.PreferencesGroup(title="Скриншоты")
         state = {"shots": list(card.get("shots") or [])}
 
@@ -462,6 +494,7 @@ class Studio(Adw.ApplicationWindow):
             card["by"] = by.get_text().strip()
             card["desc"] = desc.get_text().strip()
             card["shots"] = state["shots"]
+            # card["icon"] уже обновлён обработчиком замены, если её делали.
             try:
                 card["issue"] = int(issue.get_text().strip() or 0)
             except ValueError:
@@ -536,6 +569,14 @@ class Studio(Adw.ApplicationWindow):
         page.add(words)
 
         extra = Adw.PreferencesGroup(title="Дополнительно")
+        self.icon_row = Adw.ActionRow(
+            title="Иконка",
+            subtitle="берётся из бандла — самая крупная из имеющихся")
+        icon_btn = Gtk.Button(label="Заменить", valign=Gtk.Align.CENTER)
+        icon_btn.connect("clicked", lambda *_: self.pick_icon())
+        self.icon_row.add_suffix(icon_btn)
+        extra.add(self.icon_row)
+
         self.shots_row = Adw.ActionRow(title="Скриншоты", subtitle="не выбраны")
         shots_btn = Gtk.Button(label="Выбрать", valign=Gtk.Align.CENTER)
         shots_btn.connect("clicked", lambda *_: self.pick_shots())
@@ -557,6 +598,7 @@ class Studio(Adw.ApplicationWindow):
         page.add(extra)
 
         self.ipa_path = None
+        self.icon_path = None
         self.shot_paths = []
         return page
 
@@ -741,6 +783,18 @@ class Studio(Adw.ApplicationWindow):
             self.ipa_row.set_subtitle(human(os.path.getsize(self.ipa_path)))
         dialog.open(self, None, done)
 
+    def pick_icon(self):
+        dialog = Gtk.FileDialog(title="Иконка приложения")
+
+        def done(d, res):
+            try:
+                f = d.open_finish(res)
+            except GLib.Error:
+                return
+            self.icon_path = f.get_path()
+            self.icon_row.set_subtitle(os.path.basename(self.icon_path))
+        dialog.open(self, None, done)
+
     def pick_shots(self):
         dialog = Gtk.FileDialog(title="Выберите скриншоты")
 
@@ -815,6 +869,7 @@ class Studio(Adw.ApplicationWindow):
                             ("--quote", self.quote_entry.get_text().strip()),
                             ("--by", self.by_entry.get_text().strip()),
                             ("--desc", self.desc_entry.get_text().strip()),
+                            ("--icon", self.icon_path or ""),
                             ("--issue", self.issue_entry.get_text().strip())):
             if value:
                 args += [flag, value]

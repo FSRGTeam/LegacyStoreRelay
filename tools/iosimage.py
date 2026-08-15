@@ -60,6 +60,20 @@ def _unfilter(raw, width, height, bpp):
     return out
 
 
+def png_size(data):
+    """(ширина, высота) для PNG, включая CgBI, или None.
+
+    Читать IHDR по фиксированному смещению нельзя: у файлов Apple первым идёт
+    чанк CgBI, и заголовок сдвигается. Поэтому чанки обходятся честно.
+    """
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return None
+    for kind, body in _chunks(data):
+        if kind == "IHDR" and len(body) >= 8:
+            return struct.unpack(">II", body[:8])
+    return None
+
+
 def load_cgbi_rgba(path):
     """(ширина, высота, RGBA-байты) для CgBI-PNG, иначе None."""
     with open(path, "rb") as f:

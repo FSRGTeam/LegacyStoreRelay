@@ -15,14 +15,17 @@
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import threading
 import urllib.request
 
+import sys
+
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gio, GdkPixbuf, GLib, Gtk  # noqa: E402
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PARENT = os.path.dirname(HERE)
@@ -35,6 +38,45 @@ SITE = "https://fsrgteam.gitverse.site/legacystorerelay/"
 # Pages ограничивает артефакт сборки; показываем, сколько занято, пока шард не
 # упёрся, а не после.
 PAGES_LIMIT = 500 * 1024 * 1024
+
+sys.path.insert(0, TOOLS)
+from iosimage import load_cgbi_rgba          # noqa: E402
+from add_app import write_catalog            # noqa: E402
+
+
+def icon_image(path, size=44):
+    """Иконка приложения, чем бы она ни была.
+
+    Артворк вынут из бандла как есть, а iOS хранит PNG в варианте CgBI, который
+    GdkPixbuf не читает. Сначала пробуем штатный загрузчик, потом свой разбор —
+    и только если не вышло и это, показываем заглушку.
+    """
+    img = Gtk.Image(pixel_size=size)
+    if path and os.path.exists(path):
+        try:
+            img.set_from_pixbuf(GdkPixbuf.Pixbuf.new_from_file_at_size(path, size, size))
+            return img
+        except Exception:                                  # noqa: BLE001
+            pass
+        try:
+            got = load_cgbi_rgba(path)
+            if got:
+                w, h, rgba = got
+                pb = GdkPixbuf.Pixbuf.new_from_bytes(
+                    GLib.Bytes.new(rgba), GdkPixbuf.Colorspace.RGB, True, 8,
+                    w, h, w * 4)
+                img.set_from_pixbuf(pb.scale_simple(size, size,
+                                                    GdkPixbuf.InterpType.BILINEAR))
+                return img
+        except Exception:                                  # noqa: BLE001
+            pass
+    img.set_from_icon_name("application-x-executable-symbolic")
+    return img
+
+
+def shard_base_url(shard_id):
+    return "https://fsrgteam.gitverse.site/legacystore%s/" % shard_id.lower()
+
 
 GENRES = [
     "Social Networking", "Games", "Utilities", "Entertainment", "Music",
@@ -245,15 +287,194 @@ class Studio(Adw.ApplicationWindow):
         for sid, path in shards().items():
             size = dir_size(path)
             pct = size * 100.0 / PAGES_LIMIT
+            apps_here = [c for s, _p, c in load_apps() if s == sid]
             row = Adw.ActionRow(
                 title="LegacyStore" + sid,
-                subtitle="%s из 500 МБ (%.1f%%)" % (human(size), pct))
+                subtitle="%d %s · %s из 500 МБ (%.1f%%)"
+                         % (len(apps_here),
+                            "приложение" if len(apps_here) == 1 else "приложений",
+                            human(size), pct))
             bar = Gtk.ProgressBar(fraction=min(1.0, size / float(PAGES_LIMIT)),
                                   valign=Gtk.Align.CENTER, hexpand=False)
             bar.set_size_request(160, -1)
             row.add_suffix(bar)
+            row.add_suffix(Gtk.Image(icon_name="go-next-symbolic"))
+            row.set_activatable(True)
+            row.connect("activated", lambda _r, s=sid: self.open_shard(s))
             self.storage_group.add(row)
             self._storage_rows.append(row)
+
+    def open_shard(self, shard_id):
+        """Список приложений одного шарда — с иконками и входом в редактор."""
+        dialog = Adw.PreferencesDialog(title="LegacyStore" + shard_id,
+                                       content_width=640, content_height=620)
+        page = Adw.PreferencesPage()
+        group = Adw.PreferencesGroup(
+            title="Приложения шарда",
+            description="Нажмите на приложение, чтобы отредактировать его карточку.")
+        page.add(group)
+
+        path = shards().get(shard_id)
+        rows = [(p, c) for s, p, c in load_apps() if s == shard_id]
+        if not rows:
+            group.add(Adw.ActionRow(title="Пусто", subtitle="В этом шарде нет карточек"))
+
+        for card_path, card in rows:
+            bid = card.get("bundleId", "")
+            icon_rel = card.get("icon") or ""
+            icon_path = (os.path.join(path, icon_rel)
+                         if icon_rel and not icon_rel.startswith("http") else None)
+            row = Adw.ActionRow(
+                title="%s %s" % (card.get("title", bid), card.get("version", "")),
+                subtitle="%s · %s" % (bid, human(card.get("size", 0))))
+            row.add_prefix(icon_image(icon_path))
+            row.add_suffix(Gtk.Image(icon_name="go-next-symbolic"))
+            row.set_activatable(True)
+            row.connect("activated",
+                        lambda _r, cp=card_path, c=card, s=shard_id, d=dialog:
+                        self.open_editor(cp, c, s, d))
+            group.add(row)
+
+        dialog.add(page)
+        dialog.present(self)
+
+    def open_editor(self, card_path, card, shard_id, parent):
+        """Всё, что можно править у карточки, в одном окне."""
+        bid = card.get("bundleId", "")
+        shard_path = shards().get(shard_id)
+        dialog = Adw.PreferencesDialog(title=card.get("title") or bid,
+                                       content_width=640, content_height=720)
+        page = Adw.PreferencesPage()
+
+        # Из файла, а не из наших рук: править это здесь значило бы разойтись с
+        # тем, что реально лежит в .ipa.
+        facts = Adw.PreferencesGroup(
+            title="Из файла",
+            description="Взято из самого .ipa при проверке и не редактируется.")
+        for title, value in (
+                ("Идентификатор", bid),
+                ("Версия", card.get("version", "—")),
+                ("Требует", "iOS %s+" % (str(card.get("minOS", 0))[:1] or "?")),
+                ("Архитектуры", ", ".join(card.get("arch") or []) or "—"),
+                ("Размер", human(card.get("size", 0))),
+                ("sha256", (card.get("sha256") or "—")[:16] + "…"),
+                ("Файл", card.get("url", "—"))):
+            r = Adw.ActionRow(title=title, subtitle=str(value))
+            r.set_subtitle_selectable(True)
+            facts.add(r)
+        page.add(facts)
+
+        meta = Adw.PreferencesGroup(title="Карточка")
+        genre = Adw.ComboRow(title="Категория", model=Gtk.StringList.new(GENRES))
+        current = card.get("genre", "Uncategorized")
+        genre.set_selected(GENRES.index(current) if current in GENRES else len(GENRES) - 1)
+        meta.add(genre)
+        author = Adw.EntryRow(title="Автор")
+        author.set_text(card.get("author", "") or "")
+        meta.add(author)
+        issue = Adw.EntryRow(title="Номер заявки")
+        issue.set_text(str(card.get("issue", "") or ""))
+        meta.add(issue)
+        note = Adw.EntryRow(title="Заметка модератора")
+        note.set_text(card.get("note", "") or "")
+        meta.add(note)
+        page.add(meta)
+
+        words = Adw.PreferencesGroup(
+            title="Слова автора",
+            description="То, что увидят на баннере. Длиннее 130 символов "
+                        "обрезается при сборке.")
+        quote = Adw.EntryRow(title="Цитата")
+        quote.set_text(card.get("quote", "") or "")
+        words.add(quote)
+        by = Adw.EntryRow(title="Подпись")
+        by.set_text(card.get("by", "") or "")
+        words.add(by)
+        page.add(words)
+
+        shots_group = Adw.PreferencesGroup(title="Скриншоты")
+        state = {"shots": list(card.get("shots") or [])}
+
+        def refill_shots():
+            for r in state.get("rows", []):
+                shots_group.remove(r)
+            state["rows"] = []
+            for i, s in enumerate(state["shots"]):
+                r = Adw.ActionRow(title="%d" % (i + 1), subtitle=s)
+                if not s.startswith("http"):
+                    r.add_prefix(icon_image(os.path.join(shard_path, s), 32))
+                rm = Gtk.Button(icon_name="list-remove-symbolic",
+                                valign=Gtk.Align.CENTER)
+                rm.connect("clicked", lambda _b, k=i: (state["shots"].pop(k),
+                                                       refill_shots()))
+                r.add_suffix(rm)
+                shots_group.add(r)
+                state["rows"].append(r)
+            if not state["shots"]:
+                r = Adw.ActionRow(title="Нет", subtitle="Автор не прислал снимков")
+                shots_group.add(r)
+                state["rows"].append(r)
+
+        add_shot_row = Adw.ActionRow(title="Добавить снимки")
+        add_shot = Gtk.Button(label="Выбрать", valign=Gtk.Align.CENTER)
+
+        def choose_shots(_b):
+            fd = Gtk.FileDialog(title="Скриншоты для " + bid)
+
+            def done(d, res):
+                try:
+                    files = d.open_multiple_finish(res)
+                except GLib.Error:
+                    return
+                dest_dir = os.path.join(shard_path, "shots", bid)
+                os.makedirs(dest_dir, exist_ok=True)
+                start = len(state["shots"])
+                for i in range(files.get_n_items()):
+                    src = files.get_item(i).get_path()
+                    ext = os.path.splitext(src)[1].lower() or ".jpg"
+                    rel = "shots/%s/%d%s" % (bid, start + i + 1, ext)
+                    shutil.copyfile(src, os.path.join(shard_path, rel))
+                    state["shots"].append(rel)
+                refill_shots()
+            fd.open_multiple(dialog, None, done)
+
+        add_shot.connect("clicked", choose_shots)
+        add_shot_row.add_suffix(add_shot)
+        shots_group.add(add_shot_row)
+        refill_shots()
+        page.add(shots_group)
+
+        actions = Adw.PreferencesGroup()
+        save_row = Adw.ActionRow(title="Сохранить",
+                                 subtitle="Карточка и каталог шарда будут переписаны")
+        save = Gtk.Button(label="Сохранить", valign=Gtk.Align.CENTER)
+        save.add_css_class("suggested-action")
+
+        def do_save(_b):
+            card["genre"] = GENRES[genre.get_selected()]
+            card["author"] = author.get_text().strip()
+            card["note"] = note.get_text().strip()
+            card["quote"] = " ".join(quote.get_text().split())
+            card["by"] = by.get_text().strip()
+            card["shots"] = state["shots"]
+            try:
+                card["issue"] = int(issue.get_text().strip() or 0)
+            except ValueError:
+                card["issue"] = 0
+            with open(card_path, "w", encoding="utf-8") as f:
+                json.dump(card, f, ensure_ascii=False, indent=2, sort_keys=True)
+            n = write_catalog(shard_path, shard_base_url(shard_id))
+            self.log("сохранено: %s, каталог шарда пересобран (%d)" % (bid, n))
+            self.toast("Сохранено — не забудьте «Собрать и отправить»")
+            self.reload_all()
+            dialog.close()
+        save.connect("clicked", do_save)
+        save_row.add_suffix(save)
+        actions.add(save_row)
+        page.add(actions)
+
+        dialog.add(page)
+        dialog.present(parent or self)
 
     # -- страница «Добавить» -----------------------------------------------
 

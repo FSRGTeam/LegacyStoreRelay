@@ -521,7 +521,8 @@ class Studio(Adw.ApplicationWindow):
 
         src = Adw.PreferencesGroup(
             title="Файл",
-            description="Локальный .ipa или прямая ссылка из заявки автора.")
+            description="Локальный .ipa или .deb, либо прямая ссылка из заявки. "
+                        ".ipa ставится через installd, .deb — через dpkg.")
         self.ipa_row = Adw.ActionRow(title="Файл не выбран", subtitle="—")
         pick = Gtk.Button(label="Выбрать .ipa", valign=Gtk.Align.CENTER)
         pick.connect("clicked", lambda *_: self.pick_ipa())
@@ -534,7 +535,8 @@ class Studio(Adw.ApplicationWindow):
         check = Gtk.Button(label="Проверить")
         check.connect("clicked", lambda *_: self.run_check())
         check_row = Adw.ActionRow(title="Проверка структуры",
-                                  subtitle="zip, Info.plist, bundleId, срез armv7, minOS")
+                                  subtitle="для .ipa — Info.plist, срез armv7, minOS; "
+                                           "для .deb — control, архитектура, firmware")
         check_row.add_suffix(check)
         src.add(check_row)
 
@@ -765,10 +767,11 @@ class Studio(Adw.ApplicationWindow):
     # -- действия -----------------------------------------------------------
 
     def pick_ipa(self):
-        dialog = Gtk.FileDialog(title="Выберите .ipa")
+        dialog = Gtk.FileDialog(title="Выберите .ipa или .deb")
         flt = Gtk.FileFilter()
-        flt.set_name("Пакеты .ipa")
+        flt.set_name("Пакеты .ipa и .deb")
         flt.add_pattern("*.ipa")
+        flt.add_pattern("*.deb")
         filters = Gio.ListStore.new(Gtk.FileFilter)
         filters.append(flt)
         dialog.set_filters(filters)
@@ -829,10 +832,14 @@ class Studio(Adw.ApplicationWindow):
                 tmp = os.path.join(GLib.get_tmp_dir(), "studio_check.ipa")
                 urllib.request.urlretrieve(url, tmp)
                 local = tmp
-            args = ["python3", os.path.join(TOOLS, "ipacheck.py"), local]
+            # Инспектор выбирается по расширению: у .deb внутри вообще нет
+            # Info.plist, и ipacheck на нём скажет только «это не .ipa».
+            is_deb = local.lower().endswith(".deb")
+            tool = "debcheck.py" if is_deb else "ipacheck.py"
+            args = ["python3", os.path.join(TOOLS, tool), local]
             bundle = self.bundle_entry.get_text().strip()
             if bundle:
-                args += ["--bundle", bundle]
+                args += ["--package" if is_deb else "--bundle", bundle]
             p = subprocess.run(args, capture_output=True, text=True)
             self.log(p.stdout or p.stderr)
             if p.returncode != 0:

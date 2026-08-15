@@ -27,6 +27,7 @@ import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ipacheck import inspect, IPAError          # noqa: E402
+from debcheck import inspect as inspect_deb, DebError, _ar_members, _bundled_app_icon  # noqa: E402
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -155,13 +156,18 @@ def main():
 
     tmp = tempfile.mkdtemp(prefix="lsrelay_")
     try:
-        local = os.path.join(tmp, "submission.ipa")
+        # Расширение решает, чем это проверять и чем потом ставить: .ipa идёт
+        # через installd, .deb — через dpkg, и общего у них только то, что оба
+        # приезжают по ссылке.
+        is_deb = args.url.lower().split("?")[0].endswith(".deb")
+        local = os.path.join(tmp, "submission." + ("deb" if is_deb else "ipa"))
         print("качаю %s" % args.url)
         fetch(args.url, local)
 
         try:
-            facts = inspect(local, args.bundle)
-        except IPAError as e:
+            facts = inspect_deb(local, args.bundle) if is_deb \
+                    else inspect(local, args.bundle)
+        except (IPAError, DebError) as e:
             print("ОТКЛОНЕНО: %s" % e, file=sys.stderr)
             return 1
 
@@ -184,6 +190,19 @@ def main():
             icon_rel = "icons/%s%s" % (bundle, ext)
             shutil.copyfile(args.icon, os.path.join(path, icon_rel))
             print("иконка своя: %s" % icon_rel)
+        elif is_deb:
+            # У пакета иконки может не быть вовсе — он бывает твиком или
+            # библиотекой. Если внутри есть .app, берём оттуда самую крупную.
+            with open(local, "rb") as f:
+                blob, name = _bundled_app_icon(_ar_members(f.read()))
+            if blob:
+                os.makedirs(os.path.join(path, "icons"), exist_ok=True)
+                icon_rel = "icons/%s.png" % bundle
+                with open(os.path.join(path, icon_rel), "wb") as out:
+                    out.write(blob)
+                print("иконка из пакета: %s (%s)" % (icon_rel, name))
+            else:
+                print("иконки в пакете нет — задайте своей через --icon")
         elif facts["iconEntry"]:
             os.makedirs(os.path.join(path, "icons"), exist_ok=True)
             ext = os.path.splitext(facts["iconEntry"])[1] or ".png"
@@ -196,7 +215,8 @@ def main():
         url = args.url
         if args.keep:
             os.makedirs(os.path.join(path, "files"), exist_ok=True)
-            rel = "files/%s-%s.ipa" % (bundle, facts["version"] or "0")
+            rel = "files/%s-%s.%s" % (bundle, facts["version"] or "0",
+                                      "deb" if is_deb else "ipa")
             shutil.copyfile(local, os.path.join(path, rel))
             url = rel
             print("файл положен в шард: %s" % rel)
@@ -215,6 +235,7 @@ def main():
 
         card = {
             "bundleId": bundle,
+            "kind": "deb" if is_deb else "ipa",
             "shots": shots,
             "quote": quote,
             "by": args.by,

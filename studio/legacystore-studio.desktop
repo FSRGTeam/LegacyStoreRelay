@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Legacy Store Studio
+Comment=Публикация приложений в Legacy Store
+Exec=python3 /home/qwertyu1opz/Документы/LegacyStoreRelay/studio/legacystore_studio.py
+Icon=/home/qwertyu1opz/Документы/LegacyStoreRelay/studio/icon.png
+Terminal=false
+Categories=Development;
+StartupNotify=true

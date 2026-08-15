@@ -163,7 +163,7 @@ def main():
         with open(os.path.join(path, "apps", bundle + ".json"), "w", encoding="utf-8") as f:
             json.dump(card, f, ensure_ascii=False, indent=2, sort_keys=True)
 
-        base = args.base_url or "https://porns.gitverse.page/LegacyStore%s/" % args.shard
+        base = args.base_url or "https://fsrgteam.gitverse.site/legacystore%s/" % args.shard.lower()
         n = write_catalog(path, base)
         print("каталог шарда пересобран: %d приложений" % n)
         print("дальше: python3 tools/build_relay.py, затем git push в обоих репозиториях")

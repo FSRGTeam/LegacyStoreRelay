@@ -111,6 +111,8 @@ def write_catalog(shard_path, base_url):
             a.get("sha256", ""),
             a.get("author", ""),
             ",".join(absolute(s, base_url) for s in (a.get("shots") or [])),
+            (a.get("quote") or "").replace("\t", " "),
+            (a.get("by") or "").replace("\t", " "),
         ]))
     out = os.path.join(shard_path, "catalog.tsv")
     with open(out, "w", encoding="utf-8") as f:
@@ -133,6 +135,10 @@ def main():
     ap.add_argument("--shot", action="append", default=[], metavar="ПУТЬ|URL",
                     help="скриншот: локальный файл кладётся в шард, ссылка "
                          "берётся как есть. Можно повторять.")
+    ap.add_argument("--quote", default="", metavar="ТЕКСТ",
+                    help="слова автора для баннера (одна-две строки)")
+    ap.add_argument("--by", default="", metavar="ПОДПИСЬ",
+                    help="кто это сказал: имя или команда")
     args = ap.parse_args()
 
     path = shard_dir(args.shard)
@@ -180,9 +186,19 @@ def main():
         if shots:
             print("скриншотов: %d" % len(shots))
 
+        # Trimmed here rather than in the client: a banner has room for about
+        # this much, and cutting words on the device would cut them differently
+        # on a phone and on an iPad.
+        quote = " ".join(args.quote.split())
+        if len(quote) > 130:
+            quote = quote[:129].rsplit(" ", 1)[0] + "…"
+            print("цитата обрезана до 130 символов")
+
         card = {
             "bundleId": bundle,
             "shots": shots,
+            "quote": quote,
+            "by": args.by,
             "title": facts["title"],
             "version": facts["version"],
             "minOS": facts["minOS"],

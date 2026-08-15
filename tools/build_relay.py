@@ -21,6 +21,8 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RELAY = os.path.join(HERE, "relay.tsv")
 CATALOG = os.path.join(HERE, "catalog-all.tsv")
 VERSION = os.path.join(HERE, "version.txt")
+FEATURED_CONF = os.path.join(HERE, "featured.conf")
+FEATURED = os.path.join(HERE, "featured.tsv")
 
 
 def read_relay():
@@ -49,6 +51,32 @@ def generation():
                 except ValueError:
                     return 0
     return 0
+
+
+# The banner rotation: curated order in, verified order out.
+#
+# A bundleId that is not in the catalog is dropped rather than published, so a
+# typo here cannot become an empty banner on someone's phone. The words on the
+# banner are not here at all — they travel with the app, from its author.
+def build_featured(catalog_lines):
+    if not os.path.exists(FEATURED_CONF):
+        return []
+    known = set()
+    for line in catalog_lines:
+        parts = line.split("\t")
+        if len(parts) > 3 and parts[3]:
+            known.add(parts[3].lower())
+
+    out, missing = [], []
+    with open(FEATURED_CONF, encoding="utf-8") as f:
+        for line in f:
+            bid = line.strip()
+            if not bid or bid.startswith("#"):
+                continue
+            (out if bid.lower() in known else missing).append(bid)
+    if missing:
+        print("не в каталоге, пропущены: %s" % ", ".join(missing))
+    return out
 
 
 def main():
@@ -104,6 +132,11 @@ def main():
     with open(CATALOG, "w", encoding="utf-8") as f:
         f.write(body)
 
+    featured = build_featured(unique)
+    featured_body = "\n".join(featured) + ("\n" if featured else "")
+    with open(FEATURED, "w", encoding="utf-8") as f:
+        f.write(featured_body)
+
     gen = generation() + 1
     with open(VERSION, "w", encoding="utf-8") as f:
         f.write("generation=%d\n" % gen)
@@ -111,6 +144,9 @@ def main():
         f.write("catalog_sha256=%s\n" % hashlib.sha256(body.encode("utf-8")).hexdigest())
         f.write("catalog_bytes=%d\n" % len(body.encode("utf-8")))
         f.write("shards=%d\n" % len([r for r in rows if r[6] != "gone"]))
+        f.write("featured_sha256=%s\n"
+                % hashlib.sha256(featured_body.encode("utf-8")).hexdigest())
+        f.write("featured_count=%d\n" % len(featured))
 
     if changed_relay:
         with open(RELAY, "w", encoding="utf-8") as f:
@@ -121,6 +157,7 @@ def main():
     print("catalog-all.tsv: %d строк, %d байт%s"
           % (len(unique), len(body.encode("utf-8")),
              (", дубликатов отброшено %d" % dropped) if dropped else ""))
+    print("на баннерах: %d" % len(featured))
     print("поколение %d" % gen)
     return 0
 

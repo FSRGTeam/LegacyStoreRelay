@@ -860,43 +860,60 @@ class Studio(Adw.ApplicationWindow):
             ["python3", os.path.join(TOOLS, "build_relay.py")]))
         self.stack.set_visible_child_name("log")
 
+    def commit_and_push(self, path):
+        """True, если репозиторий отправлен или ему нечего отправлять."""
+        name = os.path.basename(path)
+        self.log("— %s" % name)
+        status = subprocess.run(["git", "status", "--porcelain"], cwd=path,
+                                capture_output=True, text=True).stdout.strip()
+        if status:
+            self.run_cmd(["git", "add", "-A"], cwd=path)
+            self.run_cmd(["git", "commit", "-m", "Обновление каталога"], cwd=path)
+        else:
+            # Норма, а не сбой: шард мог не измениться, а собрался только релей.
+            self.log("изменений нет")
+        return self.run_cmd(["git", "push"], cwd=path) == 0
+
     def push_only(self):
         def work():
             for path in [HERE] + list(shards().values()):
-                name = os.path.basename(path)
-                self.log("— %s" % name)
-                self.run_cmd(["git", "add", "-A"], cwd=path)
-                self.run_cmd(["git", "commit", "-m", "Обновление каталога"], cwd=path)
-                self.run_cmd(["git", "push"], cwd=path)
+                self.commit_and_push(path)
         self.run_bg(work)
         self.stack.set_visible_child_name("log")
 
     def check_deploy(self):
-        def work():
-            want = local_generation()
-            self.log("жду поколение %s на %s" % (want, SITE))
-            for attempt in range(1, 13):
-                try:
-                    body = urllib.request.urlopen(SITE + "version.txt", timeout=20).read()
-                except Exception as e:                  # noqa: BLE001
-                    self.log("попытка %d: %s" % (attempt, e))
-                    continue
-                text = body.decode("utf-8", "replace")
-                # Pages отвечает 200 и HTML-заглушкой на несуществующий файл,
-                # поэтому смотрим на содержимое, а не на код ответа.
-                if "generation=" not in text:
-                    self.log("попытка %d: ещё заглушка" % attempt)
-                else:
-                    got = text.split("generation=", 1)[1].split("\n", 1)[0].strip()
-                    if got == want:
-                        self.log("раскатано: поколение %s" % got)
-                        self.verify_catalog(text)
-                        return
-                    self.log("попытка %d: на сайте %s" % (attempt, got))
-                threading.Event().wait(20)
-            self.log("не дождался — Pages обычно раскатывает за пару минут")
-        self.run_bg(work)
+        self.run_bg(self.wait_for_pages)
         self.stack.set_visible_child_name("log")
+
+    # Опрос вместо ожидания события: у Pages нет способа сообщить, что сборка
+    # закончилась, и единственный честный признак готовности — новое поколение
+    # в файле, который она раздаёт.
+    def wait_for_pages(self):
+        want = local_generation()
+        self.log("жду поколение %s на %s" % (want, SITE))
+        for attempt in range(1, 13):
+            try:
+                body = urllib.request.urlopen(SITE + "version.txt", timeout=20).read()
+            except Exception as e:                      # noqa: BLE001
+                self.log("попытка %d: %s" % (attempt, e))
+                threading.Event().wait(20)
+                continue
+            text = body.decode("utf-8", "replace")
+            # Pages отвечает 200 и HTML-заглушкой на несуществующий файл,
+            # поэтому смотрим на содержимое, а не на код ответа.
+            if "generation=" not in text:
+                self.log("попытка %d: ещё заглушка" % attempt)
+            else:
+                got = text.split("generation=", 1)[1].split("\n", 1)[0].strip()
+                if got == want:
+                    self.log("раскатано: поколение %s (%d-я попытка, ~%d с)"
+                             % (got, attempt, attempt * 20))
+                    self.verify_catalog(text)
+                    return
+                self.log("попытка %d: на сайте ещё %s" % (attempt, got))
+            threading.Event().wait(20)
+        self.log("не дождался за четыре минуты — обычно хватает двух-трёх; "
+                 "проверьте сборку Pages в настройках репозитория")
 
     def verify_catalog(self, version_text):
         """Сумма из version.txt против того, что реально отдаёт сайт."""
@@ -914,14 +931,15 @@ class Studio(Adw.ApplicationWindow):
         def work():
             if self.run_cmd(["python3", os.path.join(TOOLS, "build_relay.py")]) != 0:
                 return
-            for path in [HERE] + list(shards().values()):
-                self.log("— %s" % os.path.basename(path))
-                self.run_cmd(["git", "add", "-A"], cwd=path)
-                self.run_cmd(["git", "commit", "-m", "Обновление каталога"], cwd=path)
-                if self.run_cmd(["git", "push"], cwd=path) != 0:
-                    self.log("push не прошёл, раскатку не жду")
+            # Шарды раньше релея: каталог ссылается на их файлы, и порядок
+            # решает, будет ли между двумя раскатками окно, где строка уже есть,
+            # а иконки по ссылке ещё нет.
+            for path in list(shards().values()) + [HERE]:
+                if not self.commit_and_push(path):
+                    self.log("push не прошёл — раскатку не жду")
                     return
-            self.log("отправлено, жду Pages…")
+            self.log("отправлено, жду раскатку (Pages обычно тратит 2-3 минуты)…")
+            self.wait_for_pages()
         self.run_bg(work)
         self.stack.set_visible_child_name("log")
 

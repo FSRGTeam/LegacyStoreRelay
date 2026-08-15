@@ -25,7 +25,7 @@ import sys
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio, GdkPixbuf, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PARENT = os.path.dirname(HERE)
@@ -48,25 +48,26 @@ def icon_image(path, size=44):
     """Иконка приложения, чем бы она ни была.
 
     Артворк вынут из бандла как есть, а iOS хранит PNG в варианте CgBI, который
-    GdkPixbuf не читает. Сначала пробуем штатный загрузчик, потом свой разбор —
-    и только если не вышло и это, показываем заглушку.
+    штатный загрузчик не открывает. Сначала пробуем его, потом свой разбор — и
+    только если не вышло и это, показываем заглушку.
+
+    Через Gdk.Texture, а не GdkPixbuf: в GTK 4 пиксбуф — устаревший путь, а
+    масштабирование берёт на себя сам Gtk.Image по pixel_size.
     """
     img = Gtk.Image(pixel_size=size)
     if path and os.path.exists(path):
         try:
-            img.set_from_pixbuf(GdkPixbuf.Pixbuf.new_from_file_at_size(path, size, size))
+            img.set_from_paintable(Gdk.Texture.new_from_filename(path))
             return img
-        except Exception:                                  # noqa: BLE001
+        except GLib.Error:
             pass
         try:
             got = load_cgbi_rgba(path)
             if got:
                 w, h, rgba = got
-                pb = GdkPixbuf.Pixbuf.new_from_bytes(
-                    GLib.Bytes.new(rgba), GdkPixbuf.Colorspace.RGB, True, 8,
-                    w, h, w * 4)
-                img.set_from_pixbuf(pb.scale_simple(size, size,
-                                                    GdkPixbuf.InterpType.BILINEAR))
+                img.set_from_paintable(Gdk.MemoryTexture.new(
+                    w, h, Gdk.MemoryFormat.R8G8B8A8,
+                    GLib.Bytes.new(rgba), w * 4))
                 return img
         except Exception:                                  # noqa: BLE001
             pass
@@ -436,7 +437,7 @@ class Studio(Adw.ApplicationWindow):
                     shutil.copyfile(src, os.path.join(shard_path, rel))
                     state["shots"].append(rel)
                 refill_shots()
-            fd.open_multiple(dialog, None, done)
+            fd.open_multiple(self, None, done)
 
         add_shot.connect("clicked", choose_shots)
         add_shot_row.add_suffix(add_shot)

@@ -23,6 +23,10 @@ CATALOG = os.path.join(HERE, "catalog-all.tsv")
 VERSION = os.path.join(HERE, "version.txt")
 FEATURED_CONF = os.path.join(HERE, "featured.conf")
 FEATURED = os.path.join(HERE, "featured.tsv")
+# Адрес счётчика установок. Файла нет — строки в version.txt нет, и устройства
+# ничего никуда не отправляют: это и есть выключатель сбора статистики, общий
+# для всех устройств сразу и не требующий новой сборки магазина.
+STATS_URL = os.path.join(HERE, "stats.url")
 
 
 def read_relay():
@@ -37,6 +41,27 @@ def read_relay():
                 parts.append("")
             rows.append(parts)
     return rows
+
+
+def read_stats_url():
+    """Адрес счётчика установок, если он вообще есть.
+
+    Локальный адрес сюда класть нельзя: version.txt читают все устройства, и
+    192.168.x на чужом телефоне — это восемь секунд ожидания после каждой
+    установки впустую. Только публичный адрес или ничего.
+    """
+    if not os.path.exists(STATS_URL):
+        return ""
+    with open(STATS_URL, encoding="utf-8") as f:
+        for line in f:
+            url = line.strip()
+            if not url or url.startswith("#"):
+                continue
+            if not url.startswith(("http://", "https://")):
+                print("stats.url: не адрес, пропускаю: %s" % url, file=sys.stderr)
+                return ""
+            return url
+    return ""
 
 
 def generation():
@@ -147,6 +172,9 @@ def main():
         f.write("featured_sha256=%s\n"
                 % hashlib.sha256(featured_body.encode("utf-8")).hexdigest())
         f.write("featured_count=%d\n" % len(featured))
+        stats_url = read_stats_url()
+        if stats_url:
+            f.write("stats_url=%s\n" % stats_url)
 
     if changed_relay:
         with open(RELAY, "w", encoding="utf-8") as f:

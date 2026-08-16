@@ -12,6 +12,7 @@
     python3 studio/legacystore_studio.py
 """
 
+import datetime
 import hashlib
 import json
 import os
@@ -53,6 +54,7 @@ def hosting_of(base_url):
 sys.path.insert(0, TOOLS)
 from iosimage import load_cgbi_rgba          # noqa: E402
 from add_app import write_catalog, shard_base_url   # noqa: E402
+import devkeys                                      # noqa: E402
 
 
 def icon_image(path, size=44):
@@ -227,6 +229,8 @@ class Studio(Adw.ApplicationWindow):
                                         "Добавить", "list-add-symbolic")
         self.stack.add_titled_with_icon(self.build_banner_page(), "banner",
                                         "Баннеры", "view-paged-symbolic")
+        self.stack.add_titled_with_icon(self.build_devs_page(), "devs",
+                                        "Разработчики", "avatar-default-symbolic")
         self.stack.add_titled_with_icon(self.build_log_page(), "log",
                                         "Публикация", "network-transmit-symbolic")
         outer.set_content(self.stack)
@@ -693,6 +697,237 @@ class Studio(Adw.ApplicationWindow):
 
     # -- страница «Публикация» ----------------------------------------------
 
+    # -- страница «Разработчики» -------------------------------------------
+    #
+    # Выдача ключей стоит рядом с публикацией намеренно: разнеси их — и «выдал,
+    # но забыл записать» станет обычным делом. Здесь же видно, чей ключ истекает
+    # и чей отозван, то есть состояние реестра, а не только действия над ним.
+
+    def build_devs_page(self):
+        page = Adw.PreferencesPage()
+
+        self.root_group = Adw.PreferencesGroup(
+            title="Корневой ключ",
+            description="Им подписаны все выданные ключи. Приватная половина "
+                        "лежит в ~/.legacystore под паролем и никогда не "
+                        "попадает в репозиторий.")
+        self.root_row = Adw.ActionRow(title="Состояние")
+        make_root = Gtk.Button(label="Создать", valign=Gtk.Align.CENTER)
+        make_root.connect("clicked", lambda _b: self.create_root())
+        self.root_row.add_suffix(make_root)
+        self.root_make_btn = make_root
+        self.root_group.add(self.root_row)
+        page.add(self.root_group)
+
+        issue = Adw.PreferencesGroup(
+            title="Выдать ключ",
+            description="Ключ выдаётся один раз и показывается один раз — "
+                        "у нас он не хранится, только его публичная половина.")
+        self.issue_handle = Adw.EntryRow(title="Ник (@nick)")
+        self.issue_scope = Adw.EntryRow(title="Права: маски bundleId через запятую")
+        self.issue_scope.set_text("*")
+        self.issue_years = Adw.SpinRow.new_with_range(1, 10, 1)
+        self.issue_years.set_title("Срок, лет")
+        self.issue_years.set_value(1)
+        issue.add(self.issue_handle)
+        issue.add(self.issue_scope)
+        issue.add(self.issue_years)
+
+        btn = Gtk.Button(label="Выдать ключ", halign=Gtk.Align.END,
+                         margin_top=12)
+        btn.add_css_class("suggested-action")
+        btn.connect("clicked", lambda _b: self.issue_key())
+        issue.add(btn)
+        page.add(issue)
+
+        self.devs_group = Adw.PreferencesGroup(title="Реестр")
+        page.add(self.devs_group)
+        return page
+
+    def fill_developers(self):
+        for row in getattr(self, "_dev_rows", []):
+            self.devs_group.remove(row)
+        self._dev_rows = []
+
+        has_root = os.path.exists(devkeys.ROOT_KEY)
+        self.root_row.set_subtitle("создан, %s" % devkeys.ROOT_KEY if has_root
+                                   else "не создан — без него ключи не выдать")
+        self.root_make_btn.set_visible(not has_root)
+
+        rows = devkeys.read_developers()
+        revoked = devkeys.read_revoked()
+        today = datetime.date.today()
+        if not rows:
+            row = Adw.ActionRow(title="Пусто",
+                                subtitle="Ни одного выданного ключа")
+            self.devs_group.add(row)
+            self._dev_rows.append(row)
+            return
+
+        for r in rows:
+            state = "действует"
+            if r["pubkey"] in revoked:
+                state = "отозван — %s" % revoked[r["pubkey"]][1]
+            elif r["expires"] and datetime.date.fromisoformat(r["expires"]) < today:
+                state = "истёк"
+            apps_here = [c for _s, _p, c in load_apps()
+                         if c.get("developer") == r["handle"]]
+            row = Adw.ActionRow(
+                title=r["handle"],
+                subtitle="%s · до %s · %s · приложений: %d"
+                         % (r["scope"], r["expires"], state, len(apps_here)))
+            if r["pubkey"] not in revoked:
+                rv = Gtk.Button(icon_name="action-unavailable-symbolic",
+                                valign=Gtk.Align.CENTER, tooltip_text="Отозвать")
+                rv.add_css_class("destructive-action")
+                rv.connect("clicked", lambda _b, d=r: self.confirm_revoke(d))
+                row.add_suffix(rv)
+            self.devs_group.add(row)
+            self._dev_rows.append(row)
+
+    # -- действия с ключами -------------------------------------------------
+
+    def ask_password(self, heading, confirm, then):
+        """Спрашивает пароль и отдаёт его обработчику.
+
+        Пароль не запоминается между вызовами: держать его в памяти окна,
+        которое живёт весь день, — это ровно тот случай, когда экономия одного
+        ввода стоит дороже, чем стоит.
+        """
+        dialog = Adw.MessageDialog(transient_for=self, heading=heading)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        first = Gtk.PasswordEntry(show_peek_icon=True)
+        box.append(first)
+        second = None
+        if confirm:
+            second = Gtk.PasswordEntry(show_peek_icon=True)
+            box.append(second)
+            dialog.set_body("Введите пароль дважды. Забыть его нельзя: "
+                            "корневой ключ восстановлению не подлежит, и всем "
+                            "разработчикам придётся выдавать ключи заново.")
+        dialog.set_extra_child(box)
+        dialog.add_response("cancel", "Отмена")
+        dialog.add_response("ok", "Продолжить")
+        dialog.set_default_response("ok")
+
+        def answered(d, response):
+            if response != "ok":
+                return
+            password = first.get_text()
+            if confirm and password != second.get_text():
+                self.toast("Пароли не совпали")
+                return
+            if confirm and len(password) < 8:
+                self.toast("Пароль короче восьми символов")
+                return
+            then(password)
+
+        dialog.connect("response", answered)
+        dialog.present()
+
+    def create_root(self):
+        def go(password):
+            try:
+                from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+                    Ed25519PrivateKey)
+                pub = devkeys.save_root(Ed25519PrivateKey.generate(), password)
+            except Exception as exc:                          # noqa: BLE001
+                self.toast("Не вышло: %s" % exc)
+                return
+            self.log("корневой ключ создан, публичная половина: %s" % pub)
+            self.log("впиши её в tools/devkeys.py:  PINNED_ROOT = \"%s\"" % pub)
+            self.toast("Корневой ключ создан")
+            self.fill_developers()
+        self.ask_password("Пароль для корневого ключа", True, go)
+
+    def issue_key(self):
+        handle = self.issue_handle.get_text().strip()
+        scope = self.issue_scope.get_text().strip() or "*"
+        years = int(self.issue_years.get_value())
+        if not handle:
+            self.toast("Не указан ник")
+            return
+        if not os.path.exists(devkeys.ROOT_KEY):
+            self.toast("Сначала создайте корневой ключ")
+            return
+
+        def go(password):
+            try:
+                root = devkeys.load_root(password)
+                token = devkeys.make_token(root, handle, scope, years=years)
+                data = devkeys.parse_token(token, root_pub=root.public_key(),
+                                           check_revoked=False)
+                devkeys.register(data)
+            except Exception as exc:                          # noqa: BLE001
+                self.toast("Не вышло: %s" % exc)
+                return
+            self.log("выдан ключ %s, права «%s», до %s"
+                     % (data["handle"], data["scope"],
+                        data["expires"].isoformat()))
+            self.issue_handle.set_text("")
+            self.fill_developers()
+            self.show_token(data["handle"], token)
+        self.ask_password("Пароль корневого ключа", False, go)
+
+    def show_token(self, handle, token):
+        """Показывает ключ один раз и предлагает скопировать.
+
+        Второй раз его взять неоткуда: у нас остаётся только публичная
+        половина. Об этом сказано прямо в окне, чтобы никто не закрыл его,
+        рассчитывая вернуться позже.
+        """
+        dialog = Adw.MessageDialog(
+            transient_for=self, heading="Ключ для %s" % handle,
+            body="Отдайте эту строку разработчику. Больше она нигде не "
+                 "хранится: у нас остаётся только публичная половина, и "
+                 "показать ключ ещё раз будет невозможно.")
+        view = Gtk.TextView(editable=False, wrap_mode=Gtk.WrapMode.CHAR,
+                            monospace=True, top_margin=8, bottom_margin=8,
+                            left_margin=8, right_margin=8)
+        view.get_buffer().set_text(token)
+        scroll = Gtk.ScrolledWindow(min_content_height=120, propagate_natural_height=True)
+        scroll.set_child(view)
+        scroll.add_css_class("card")
+        dialog.set_extra_child(scroll)
+        dialog.add_response("copy", "Скопировать")
+        dialog.add_response("close", "Закрыть")
+        dialog.set_response_appearance("copy", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("copy")
+
+        def answered(d, response):
+            if response == "copy":
+                self.get_clipboard().set(token)
+                self.toast("Ключ скопирован")
+        dialog.connect("response", answered)
+        dialog.present()
+
+    def confirm_revoke(self, dev):
+        dialog = Adw.MessageDialog(
+            transient_for=self, heading="Отозвать ключ %s?" % dev["handle"],
+            body="Ключ перестанет проходить проверку при публикации. "
+                 "Уже опубликованные приложения останутся на месте — отзыв "
+                 "касается будущих заявок, а не прошлых.")
+        entry = Adw.EntryRow(title="Причина")
+        dialog.set_extra_child(entry)
+        dialog.add_response("cancel", "Отмена")
+        dialog.add_response("revoke", "Отозвать")
+        dialog.set_response_appearance("revoke", Adw.ResponseAppearance.DESTRUCTIVE)
+
+        def answered(d, response):
+            if response != "revoke":
+                return
+            devkeys.add_revoked(dev["pubkey"], entry.get_text().strip() or "без причины")
+            rows = devkeys.read_developers()
+            for r in rows:
+                if r["handle"] == dev["handle"]:
+                    r["status"] = "revoked"
+            devkeys.write_developers(rows)
+            self.log("отозван ключ %s" % dev["handle"])
+            self.toast("Ключ отозван")
+            self.fill_developers()
+        dialog.connect("response", answered)
+        dialog.present()
+
     def build_log_page(self):
         page = Adw.PreferencesPage()
         group = Adw.PreferencesGroup(
@@ -775,6 +1010,7 @@ class Studio(Adw.ApplicationWindow):
         self.fill_apps()
         self.fill_storage()
         self.fill_banners()
+        self.fill_developers()
         gen = local_generation()
         self.gen_row.set_subtitle("локально: %s" % (gen or "нет сборки"))
         return False

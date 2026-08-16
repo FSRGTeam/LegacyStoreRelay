@@ -28,6 +28,32 @@ import zipfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ipacheck import inspect, IPAError          # noqa: E402
 from debcheck import inspect as inspect_deb, DebError, _ar_members, _bundled_app_icon  # noqa: E402
+from iosimage import load_cgbi_rgba             # noqa: E402
+
+
+def write_icon(blob, dest):
+    """Кладёт иконку так, чтобы её читали все.
+
+    Артворк из бандла iOS — это CgBI: формально PNG, а на деле поток без
+    zlib-заголовка и каналы BGRA. Устройство декодирует его нативно, но браузер
+    и любая десктопная библиотека — нет, и на сайте такая иконка не появляется
+    вовсе. Поэтому при публикации CgBI разбирается и пересохраняется обычным
+    PNG: устройству всё равно, а витрине — нет.
+    """
+    with open(dest, "wb") as f:
+        f.write(blob)
+    got = load_cgbi_rgba(dest)
+    if not got:
+        return dest                      # обычный PNG — трогать нечего
+    try:
+        from PIL import Image
+    except ImportError:
+        print("CgBI не пересохранён: нет Pillow", file=sys.stderr)
+        return dest
+    w, h, rgba = got
+    Image.frombytes("RGBA", (w, h), rgba).save(dest, "PNG", optimize=True)
+    print("иконка пересохранена из CgBI: %dx%d" % (w, h))
+    return dest
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -198,8 +224,7 @@ def main():
             if blob:
                 os.makedirs(os.path.join(path, "icons"), exist_ok=True)
                 icon_rel = "icons/%s.png" % bundle
-                with open(os.path.join(path, icon_rel), "wb") as out:
-                    out.write(blob)
+                write_icon(blob, os.path.join(path, icon_rel))
                 print("иконка из пакета: %s (%s)" % (icon_rel, name))
             else:
                 print("иконки в пакете нет — задайте своей через --icon")
@@ -207,9 +232,8 @@ def main():
             os.makedirs(os.path.join(path, "icons"), exist_ok=True)
             ext = os.path.splitext(facts["iconEntry"])[1] or ".png"
             icon_rel = "icons/%s%s" % (bundle, ext)
-            with zipfile.ZipFile(local) as zf, \
-                 open(os.path.join(path, icon_rel), "wb") as out:
-                out.write(zf.read(facts["iconEntry"]))
+            with zipfile.ZipFile(local) as zf:
+                write_icon(zf.read(facts["iconEntry"]), os.path.join(path, icon_rel))
             print("иконка: %s" % icon_rel)
 
         url = args.url

@@ -919,7 +919,13 @@ class Studio(Adw.ApplicationWindow):
             head, ids = read_featured()
             if bid in ids:
                 write_featured(head, [i for i in ids if i != bid])
-            self.log("удалено: %s" % bid)
+
+            # Каталог шарда обязан пересобраться здесь же. Без этого строка
+            # удалённого приложения остаётся в catalog.tsv и продолжает
+            # публиковаться: карточки нет, файлов нет, а в магазине оно есть.
+            n = write_catalog(shard, shard_base_url(shard_id))
+            self.log("удалено: %s, в каталоге шарда осталось %d" % (bid, n))
+            self.toast("Удалено — не забудьте «Собрать и отправить»")
             self.reload_all()
         dialog.connect("response", answered)
         dialog.present()

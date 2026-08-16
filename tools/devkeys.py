@@ -74,7 +74,7 @@ FORMAT_VERSION = 1
 # чём выводится предупреждение. Как только сюда вписано значение, файл теряет
 # власть: подменивший registry.pub подменил бы и доверие, а зашитая константа
 # превращает подмену в ошибку проверки. `init` печатает готовую строку.
-PINNED_ROOT = ""
+PINNED_ROOT = "45VJNTHRJUWHTO37LCRBUJNU24YLLHTKUJCXRW74VLSX5MJMIHNA"
 
 
 class DevKeyError(Exception):

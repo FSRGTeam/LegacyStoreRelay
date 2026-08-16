@@ -33,7 +33,7 @@ TOOLS = os.path.join(HERE, "tools")
 RELAY_TSV = os.path.join(HERE, "relay.tsv")
 FEATURED_CONF = os.path.join(HERE, "featured.conf")
 VERSION_TXT = os.path.join(HERE, "version.txt")
-SITE = "https://fsrgteam.gitverse.site/legacystorerelay/"
+SITE = "https://fsrgteam.github.io/LegacyStoreRelay/"
 
 # Два хостинга считают место по-разному, и путать их дорого.
 #

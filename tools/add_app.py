@@ -31,6 +31,35 @@ from debcheck import inspect as inspect_deb, DebError, _ar_members, _bundled_app
 from iosimage import load_cgbi_rgba             # noqa: E402
 
 
+RELAY_TSV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "relay.tsv")
+
+
+def shard_base_url(shard_id):
+    """Адрес, по которому раздаётся шард.
+
+    Источник правды — колонка base_url в relay.tsv, а не шаблон в коде. Шарды
+    живут на разных хостингах: у GitVerse квота артефактов считается на весь
+    аккаунт и списывает вес всего сайта при каждой публикации, поэтому тяжёлые
+    шарды с .ipa переехали на GitHub Pages, а релей остался там, где у iOS 5
+    проверяемая цепочка сертификатов. Зашитый шаблон это бы просто сломал.
+
+    Шарда ещё нет в relay.tsv — значит он новый; отдаём прежний адрес GitVerse,
+    и build_relay.py впишет его в таблицу.
+    """
+    try:
+        with open(RELAY_TSV, encoding="utf-8") as f:
+            for line in f:
+                if not line.strip() or line.startswith("#"):
+                    continue
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) > 2 and parts[0] == shard_id and parts[2].strip():
+                    return parts[2].strip()
+    except OSError:
+        pass
+    return "https://fsrgteam.gitverse.site/legacystore%s/" % shard_id.lower()
+
+
 def write_icon(blob, dest):
     """Кладёт иконку так, чтобы её читали все.
 
@@ -295,7 +324,7 @@ def main():
         with open(os.path.join(path, "apps", bundle + ".json"), "w", encoding="utf-8") as f:
             json.dump(card, f, ensure_ascii=False, indent=2, sort_keys=True)
 
-        base = args.base_url or "https://fsrgteam.gitverse.site/legacystore%s/" % args.shard.lower()
+        base = args.base_url or shard_base_url(args.shard)
         n = write_catalog(path, base)
         print("каталог шарда пересобран: %d приложений" % n)
         print("дальше: python3 tools/build_relay.py, затем git push в обоих репозиториях")

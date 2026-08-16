@@ -3,7 +3,7 @@
 """Legacy Store Studio — вся публикация приложения в одном окне.
 
 Обёртка над tools/: проверка .ipa, карточка в шарде, очередь баннеров, сборка
-релея, отправка в GitVerse и ожидание раскатки Pages. Скрипты остаются главными
+релея, отправка на хостинг и ожидание раскатки Pages. Скрипты остаются главными
 — студия их запускает и показывает их же вывод, а не повторяет их логику. Всё,
 что она делает своими руками, — читает JSON-карточки и правит featured.conf.
 
@@ -35,13 +35,24 @@ FEATURED_CONF = os.path.join(HERE, "featured.conf")
 VERSION_TXT = os.path.join(HERE, "version.txt")
 SITE = "https://fsrgteam.gitverse.site/legacystorerelay/"
 
-# Pages ограничивает артефакт сборки; показываем, сколько занято, пока шард не
-# упёрся, а не после.
-PAGES_LIMIT = 500 * 1024 * 1024
+# Два хостинга считают место по-разному, и путать их дорого.
+#
+# GitVerse: 500 МБ артефактов сборки **на весь аккаунт**, и каждая публикация
+# кладёт туда сайт целиком, а не разницу. То есть вес шарда — это не «сколько
+# занято», а цена одной публикации, и упереться можно с одним репозиторием.
+# GitHub: ограничение на текущий размер сайта (1 ГБ), накопительного счётчика
+# нет — публикуй сколько угодно.
+GITVERSE_ARTIFACT_QUOTA = 500 * 1024 * 1024
+GITHUB_PAGES_LIMIT = 1024 * 1024 * 1024
+
+
+def hosting_of(base_url):
+    """Кто раздаёт шард: по адресу из relay.tsv, а не по догадке."""
+    return "github" if "github.io" in (base_url or "") else "gitverse"
 
 sys.path.insert(0, TOOLS)
 from iosimage import load_cgbi_rgba          # noqa: E402
-from add_app import write_catalog            # noqa: E402
+from add_app import write_catalog, shard_base_url   # noqa: E402
 
 
 def icon_image(path, size=44):
@@ -73,10 +84,6 @@ def icon_image(path, size=44):
             pass
     img.set_from_icon_name("application-x-executable-symbolic")
     return img
-
-
-def shard_base_url(shard_id):
-    return "https://fsrgteam.gitverse.site/legacystore%s/" % shard_id.lower()
 
 
 GENRES = [
@@ -287,15 +294,23 @@ class Studio(Adw.ApplicationWindow):
         self._storage_rows = []
         for sid, path in shards().items():
             size = dir_size(path)
-            pct = size * 100.0 / PAGES_LIMIT
+            host = hosting_of(shard_base_url(sid))
+            limit = GITHUB_PAGES_LIMIT if host == "github" else GITVERSE_ARTIFACT_QUOTA
             apps_here = [c for s, _p, c in load_apps() if s == sid]
+            if host == "github":
+                where = "GitHub · %s из 1 ГБ" % human(size)
+            else:
+                # Не «занято», а «сколько стоит нажать «опубликовать»»: квота
+                # списывается весом всего сайта при каждой публикации.
+                where = "GitVerse · публикация стоит %s, это %.1f%% квоты аккаунта" \
+                        % (human(size), size * 100.0 / limit)
             row = Adw.ActionRow(
                 title="LegacyStore" + sid,
-                subtitle="%d %s · %s из 500 МБ (%.1f%%)"
+                subtitle="%d %s · %s"
                          % (len(apps_here),
                             "приложение" if len(apps_here) == 1 else "приложений",
-                            human(size), pct))
-            bar = Gtk.ProgressBar(fraction=min(1.0, size / float(PAGES_LIMIT)),
+                            where))
+            bar = Gtk.ProgressBar(fraction=min(1.0, size / float(limit)),
                                   valign=Gtk.Align.CENTER, hexpand=False)
             bar.set_size_request(160, -1)
             row.add_suffix(bar)

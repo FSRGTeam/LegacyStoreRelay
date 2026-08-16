@@ -245,6 +245,20 @@ def main():
             url = rel
             print("файл положен в шард: %s" % rel)
 
+            # Прошлые сборки того же приложения удаляются: каталог ссылается
+            # ровно на один файл, а каждая публикация шарда целиком уходит в
+            # артефакт Pages, где на репозиторий отведено 500 МБ на 30 дней.
+            # Забытая версия — это минус одна публикация из девяти.
+            keep_name = os.path.basename(rel)
+            files_dir = os.path.join(path, "files")
+            for old in sorted(os.listdir(files_dir)):
+                if old == keep_name:
+                    continue
+                stem, ext = os.path.splitext(old)
+                if ext.lower() in (".ipa", ".deb") and stem.startswith(bundle + "-"):
+                    os.remove(os.path.join(files_dir, old))
+                    print("убрана прошлая сборка: files/%s" % old)
+
         shots = collect_shots(path, bundle, args.shot)
         if shots:
             print("скриншотов: %d" % len(shots))

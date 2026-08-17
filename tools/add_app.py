@@ -26,7 +26,6 @@ import urllib.request
 import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import devkeys                                  # noqa: E402
 from ipacheck import inspect, IPAError          # noqa: E402
 from debcheck import inspect as inspect_deb, DebError, _ar_members, _bundled_app_icon  # noqa: E402
 from iosimage import load_cgbi_rgba             # noqa: E402
@@ -203,16 +202,7 @@ def main():
                     help="описание приложения словами автора")
     ap.add_argument("--icon", default="", metavar="ПУТЬ",
                     help="своя иконка вместо вынутой из бандла")
-    ap.add_argument("--token", default="", metavar="LSD1...",
-                    help="ключ разработчика: подтверждает, что заявка от него")
-    ap.add_argument("--no-token", action="store_true",
-                    help="опубликовать без ключа (только для своих приложений)")
     args = ap.parse_args()
-
-    if not args.token and not args.no_token:
-        print("нужен --token разработчика (или --no-token, если приложение своё)",
-              file=sys.stderr)
-        return 2
 
     path = shard_dir(args.shard)
     if not os.path.isdir(path):
@@ -241,22 +231,6 @@ def main():
         print("принято: %s %s, %s, minOS %d, %.1f МБ"
               % (facts["title"], facts["version"], "/".join(facts["arch"]),
                  facts["minOS"], facts["size"] / 1048576.0))
-
-        # Ключ проверяется после разбора файла, а не до: права выданы на
-        # bundleId, а настоящий bundleId известен только из самого бандла.
-        # Верить тому, что написано в заявке, — значит проверять не то.
-        developer = ""
-        if args.token:
-            try:
-                who = devkeys.parse_token(args.token, bundle=bundle)
-            except devkeys.DevKeyError as e:
-                print("ОТКЛОНЕНО: ключ разработчика — %s" % e, file=sys.stderr)
-                return 1
-            developer = who["handle"]
-            print("подписано: %s (права «%s», до %s)"
-                  % (developer, who["scope"], who["expires"].isoformat()))
-        else:
-            print("без ключа разработчика (--no-token)")
 
         icon_rel = ""
         # Своя иконка бьёт вынутую из бандла: в старых сборках она бывает
@@ -345,9 +319,6 @@ def main():
             "author": args.author,
             "issue": args.issue,
             "note": args.note,
-            # Ник из ключа, а не из --author: тот пишется руками и означает
-            # «кто себя так назвал», а этот — «чей ключ это подтвердил».
-            "developer": developer,
         }
         os.makedirs(os.path.join(path, "apps"), exist_ok=True)
         with open(os.path.join(path, "apps", bundle + ".json"), "w", encoding="utf-8") as f:

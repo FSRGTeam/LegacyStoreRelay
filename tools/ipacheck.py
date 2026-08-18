@@ -244,51 +244,30 @@ def inspect(path, expect_bundle=None, max_min_os=60103):
 def _icon_name(info, zf, root):
     """Самая крупная иконка приложения. Возвращается путь внутри архива.
 
-    Выбор по имени не работает: в бандле лежат и Icon.png на 57 точек, и
-    Icon-167.png, и Icon-60@3x.png — а порядок в CFBundleIconFiles ничего не
-    говорит о размере. Магазин показывает иконку на 128 точек при удвоенной
-    плотности, поэтому берётся самая большая, и это разница между чёткой
-    картинкой и мылом.
+    Что считать иконкой, решает iconpick: сперва Info.plist, и только если он
+    молчит — имена файлов. Прежнее «всё в корне бандла, что начинается на icon»
+    подбирало и заготовки вроде icon-settings-src.png, которые крупнее
+    настоящей иконки и ею не являются.
+
+    Из нескольких размеров берётся наибольший: магазин рисует иконку на 128
+    точках при удвоенной плотности, и 57×57 там расплывается.
 
     Файлы не перекодируются: iOS хранит их в варианте CgBI, который десктопные
     библиотеки не читают, а устройство декодирует нативно.
     """
-    names = []
-    icons = info.get("CFBundleIcons")
-    if isinstance(icons, dict):
-        primary = icons.get("CFBundlePrimaryIcon")
-        if isinstance(primary, dict):
-            names += list(primary.get("CFBundleIconFiles") or [])
-    names += list(info.get("CFBundleIconFiles") or [])
-    if info.get("CFBundleIconFile"):
-        names.append(info["CFBundleIconFile"])
+    import iconpick
 
-    entries = set(zf.namelist())
-    candidates = set()
-    for base in names:
-        for cand in (base, base + ".png", base + "@2x.png", base + "@3x.png"):
-            if root + cand in entries:
-                candidates.add(root + cand)
-
-    # Плюс всё, что в корне бандла названо иконкой: у приложений вроде этого
-    # половина размеров в Info.plist не перечислена вовсе.
-    for entry in entries:
-        rest = entry[len(root):] if entry.startswith(root) else ""
-        if "/" in rest or not rest.lower().endswith(".png"):
+    files = []
+    for entry in zf.namelist():
+        if not entry.startswith(root):
             continue
-        low = rest.lower()
-        if low.startswith("icon") and "-small" not in low:
-            candidates.add(entry)
+        rest = entry[len(root):]
+        if rest and "/" not in rest and rest.lower().endswith(".png"):
+            files.append(rest)
 
-    best, best_area = None, 0
-    for entry in candidates:
-        size = png_size(zf.read(entry))
-        if not size:
-            continue
-        area = size[0] * size[1]
-        if area > best_area:
-            best, best_area = entry, area
-    return best
+    picked = iconpick.largest(iconpick.candidates(info, files),
+                              lambda name: png_size(zf.read(root + name)))
+    return (root + picked) if picked else None
 
 
 def main():

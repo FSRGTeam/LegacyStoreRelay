@@ -130,6 +130,17 @@ def collect_shots(shard_path, bundle, sources):
     return out
 
 
+def icon_name(bundle, blob, ext=".png"):
+    """Имя файла иконки с отпечатком содержимого.
+
+    Устройство кеширует иконку по её адресу и навсегда: перезаписать файл под
+    тем же именем — значит оставить всех со старой картинкой. Восемь знаков
+    отпечатка в имени делают исправленную иконку новым адресом, и она приезжает
+    сама, без вычищения кеша руками.
+    """
+    return "icons/%s-%s%s" % (bundle, hashlib.sha1(blob).hexdigest()[:8], ext)
+
+
 def write_catalog(shard_path, base_url):
     """Rebuild the shard's catalog.tsv from its app cards.
 
@@ -242,7 +253,8 @@ def main():
                 return 1
             os.makedirs(os.path.join(path, "icons"), exist_ok=True)
             ext = os.path.splitext(args.icon)[1].lower() or ".png"
-            icon_rel = "icons/%s%s" % (bundle, ext)
+            with open(args.icon, "rb") as f:
+                icon_rel = icon_name(bundle, f.read(), ext)
             shutil.copyfile(args.icon, os.path.join(path, icon_rel))
             print("иконка своя: %s" % icon_rel)
         elif is_deb:
@@ -252,7 +264,7 @@ def main():
                 blob, name = _bundled_app_icon(_ar_members(f.read()))
             if blob:
                 os.makedirs(os.path.join(path, "icons"), exist_ok=True)
-                icon_rel = "icons/%s.png" % bundle
+                icon_rel = icon_name(bundle, blob)
                 write_icon(blob, os.path.join(path, icon_rel))
                 print("иконка из пакета: %s (%s)" % (icon_rel, name))
             else:
@@ -260,9 +272,10 @@ def main():
         elif facts["iconEntry"]:
             os.makedirs(os.path.join(path, "icons"), exist_ok=True)
             ext = os.path.splitext(facts["iconEntry"])[1] or ".png"
-            icon_rel = "icons/%s%s" % (bundle, ext)
             with zipfile.ZipFile(local) as zf:
-                write_icon(zf.read(facts["iconEntry"]), os.path.join(path, icon_rel))
+                blob = zf.read(facts["iconEntry"])
+            icon_rel = icon_name(bundle, blob, ext)
+            write_icon(blob, os.path.join(path, icon_rel))
             print("иконка: %s" % icon_rel)
 
         url = args.url

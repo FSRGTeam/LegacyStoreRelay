@@ -94,30 +94,60 @@ def _min_os(depends):
 
 
 def _bundled_app_icon(members):
-    """Самая крупная иконка из .app внутри пакета, если он ставит приложение."""
+    """Иконка приложения из .app внутри пакета, если он его ставит.
+
+    Раньше бралась просто самая крупная картинка с именем на «icon» — и у
+    Senko побеждала icon-settings-src.png, шестерёнка на 512 точек. Теперь
+    сначала спрашиваем Info.plist самого бандла, и только если он молчит,
+    смотрим на имена (см. iconpick).
+    """
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from iosimage import png_size
+    import iconpick
+    import plistlib
 
     best, best_area, best_name = None, 0, None
     for name, body in members.items():
         if not name.startswith("data.tar"):
             continue
         with _open_tar(name, body) as tar:
+            # Файлы группируются по бандлу: в пакете может стоять и приложение,
+            # и его расширение, и у каждого свой Info.plist.
+            bundles = {}
             for member in tar.getmembers():
                 low = member.name.lower()
-                if ".app/" not in low or not low.endswith(".png"):
+                if ".app/" not in low or not member.isfile():
                     continue
-                # Имя файла внутри .app, а не путь: "Icon@2x.png" лежит прямо
-                # в корне бандла, и искать в нём "/icon" бессмысленно.
-                if not low.rsplit(".app/", 1)[1].startswith("icon"):
+                root, rest = member.name.rsplit(".app/", 1)
+                if "/" in rest:          # только корень бандла
                     continue
-                blob = tar.extractfile(member).read()
-                size = png_size(blob)
-                if not size:
+                bundles.setdefault(root + ".app/", {})[rest] = member
+
+            for root, files in bundles.items():
+                info = {}
+                if "Info.plist" in files:
+                    try:
+                        # plistlib читает и XML, и двоичный вариант: iOS пишет
+                        # второй, и без этого список иконок остался бы пустым.
+                        info = plistlib.loads(tar.extractfile(files["Info.plist"]).read())
+                    except Exception:
+                        info = {}
+
+                blobs = {}
+
+                def size_of(entry, _files=files, _blobs=blobs, _tar=tar):
+                    if entry not in _blobs:
+                        _blobs[entry] = _tar.extractfile(_files[entry]).read()
+                    return png_size(_blobs[entry])
+
+                names = [f for f in files if f.lower().endswith(".png")]
+                picked = iconpick.largest(iconpick.candidates(info, names), size_of)
+                if not picked:
                     continue
-                area = size[0] * size[1]
+                size = png_size(blobs[picked])
+                area = size[0] * size[1] if size else 0
                 if area > best_area:
-                    best, best_area, best_name = blob, area, member.name
+                    best, best_area, best_name = blobs[picked], area, root + picked
     return best, best_name
 
 

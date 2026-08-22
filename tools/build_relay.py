@@ -28,6 +28,12 @@ FEATURED = os.path.join(HERE, "featured.tsv")
 # для всех устройств сразу и не требующий новой сборки магазина.
 STATS_URL = os.path.join(HERE, "stats.url")
 
+# Адрес оценок. Их держит сайт, а не этот репозиторий: рейтинг меняется от
+# каждой поставленной звезды, и коммит на каждую был бы издевательством и над
+# историей, и над GitHub Pages. Файла нет — строки в version.txt нет, и
+# магазин рисует звёзды только по данным Apple, как и раньше.
+RATINGS_URL = os.path.join(HERE, "ratings.url")
+
 
 def read_relay():
     rows = []
@@ -43,22 +49,22 @@ def read_relay():
     return rows
 
 
-def read_stats_url():
-    """Адрес счётчика установок, если он вообще есть.
+def read_url_file(path, what):
+    """Публичный адрес из однострочного файла, если он вообще есть.
 
     Локальный адрес сюда класть нельзя: version.txt читают все устройства, и
     192.168.x на чужом телефоне — это восемь секунд ожидания после каждой
     установки впустую. Только публичный адрес или ничего.
     """
-    if not os.path.exists(STATS_URL):
+    if not os.path.exists(path):
         return ""
-    with open(STATS_URL, encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             url = line.strip()
             if not url or url.startswith("#"):
                 continue
             if not url.startswith(("http://", "https://")):
-                print("stats.url: не адрес, пропускаю: %s" % url, file=sys.stderr)
+                print("%s: не адрес, пропускаю: %s" % (what, url), file=sys.stderr)
                 return ""
             return url
     return ""
@@ -172,9 +178,12 @@ def main():
         f.write("featured_sha256=%s\n"
                 % hashlib.sha256(featured_body.encode("utf-8")).hexdigest())
         f.write("featured_count=%d\n" % len(featured))
-        stats_url = read_stats_url()
+        stats_url = read_url_file(STATS_URL, "stats.url")
         if stats_url:
             f.write("stats_url=%s\n" % stats_url)
+        ratings_url = read_url_file(RATINGS_URL, "ratings.url")
+        if ratings_url:
+            f.write("ratings_url=%s\n" % ratings_url)
 
     if changed_relay:
         with open(RELAY, "w", encoding="utf-8") as f:

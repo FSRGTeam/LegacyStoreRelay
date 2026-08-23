@@ -1,0 +1,90 @@
+# Пересборка общего каталога.
+#
+# Одобрение на сайте кладёт приложение в шард и там останавливается: писать в
+# релей хостингу нечем, у него ключ только от шарда — и это правильно, взлом
+# сайта не должен давать возможности подменить каталог всем устройствам.
+# Пересобирал catalog-all.tsv человек руками, и пока он этого не сделал,
+# одобренного приложения не видел никто. Этим и занят этот запуск.
+#
+# Собирает он ровно то же самое и тем же tools/build_relay.py, что и человек за
+# терминалом: второй способ сборки разошёлся бы с первым.
+
+name: Каталог
+
+on:
+  schedule:
+    # Раз в четверть часа. Чаще нет смысла: страницы GitHub раскатываются
+    # минуту-две, а заявки приходят не по одной в минуту.
+    - cron: '*/15 * * * *'
+  # Кнопка «собрать сейчас» на вкладке Actions — когда ждать четверть часа лень.
+  workflow_dispatch:
+  # Толчок извне: шард после публикации сможет позвать сборку сам.
+  repository_dispatch:
+    types: [shard-updated]
+
+permissions:
+  contents: write
+
+# Две сборки разом подрались бы за один и тот же push.
+concurrency:
+  group: catalog
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Забрать релей
+        uses: actions/checkout@v4
+        with:
+          path: LegacyStoreRelay
+
+      - name: Забрать каталоги шардов
+        # Шарды должны лежать соседями релея: build_relay.py ищет их как
+        # ../LegacyStore<id> относительно себя.
+        #
+        # Берётся из каждого один файл. В шарде лежат .ipa на сотни мегабайт, а
+        # сборке нужен только catalog.tsv, поэтому клон без содержимого файлов
+        # (--filter=blob:none) и разрежённая выкладка одного пути. Не raw-ссылка
+        # с CDN: та отдаёт файл из кеша и может подсунуть вчерашний каталог, а
+        # опубликовать устаревший каталог хуже, чем не опубликовать никакой.
+        run: |
+          set -eu
+          cd "$GITHUB_WORKSPACE"
+          while IFS=$'\t' read -r id name base apps updated digest state || [ -n "$id" ]; do
+            case "$id" in ''|'#'*) continue ;; esac
+            # Не `[ ... ] && continue`: при set -e ложное условие в конце тела
+            # цикла роняет весь запуск.
+            if [ "$state" = "gone" ]; then continue; fi
+            echo "шард $id"
+            git clone --quiet --depth 1 --filter=blob:none --no-checkout \
+                "https://github.com/${GITHUB_REPOSITORY%/*}/LegacyStore$id.git" "LegacyStore$id"
+            git -C "LegacyStore$id" sparse-checkout set --no-cone catalog.tsv
+            git -C "LegacyStore$id" checkout --quiet
+          done < LegacyStoreRelay/relay.tsv
+
+      - name: Собрать каталог
+        # --strict: отсутствующий шард — это ошибка сборки. Молча опубликовать
+        # каталог, в котором нет трети приложений, хуже, чем упасть.
+        run: python3 tools/build_relay.py --strict
+        working-directory: LegacyStoreRelay
+
+      - name: Выложить, если каталог изменился
+        # Только если изменился он сам. version.txt меняется при каждой сборке —
+        # там время и счётчик поколения, — и коммит по нему означал бы, что
+        # каждые пятнадцать минут все устройства заново качают тот же каталог:
+        # магазин сверяет как раз поколение. Поэтому смотрим на содержимое, а
+        # несостоявшуюся сборку откатываем целиком.
+        run: |
+          set -eu
+          if git diff --quiet -- catalog-all.tsv featured.tsv; then
+            echo "каталог не изменился, поколение не трогаем"
+            git checkout -- .
+            exit 0
+          fi
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m "Каталог пересобран: $(grep '^generation=' version.txt)"
+          git push
+        working-directory: LegacyStoreRelay

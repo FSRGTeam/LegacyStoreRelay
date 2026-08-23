@@ -150,6 +150,23 @@ def write_catalog(shard_path, base_url):
     def absolute(u, base):
         return u if u.startswith("http") else base.rstrip("/") + "/" + u.lstrip("/")
 
+    def one_line(value):
+        """Свободный текст автора — в одну строку TSV.
+
+        Переносы едут символом \u2028 и разворачиваются обратно на устройстве.
+        Считать концом строки надо все три вида, а не только \n: из формы на
+        сайте текст приходит с \r\n, и раньше замена \n оставляла одинокий
+        \r внутри поля. В самом shard-каталоге он был незаметен, но build_relay
+        читает файл в текстовом режиме, где \r — тоже конец строки, и запись
+        разваливалась надвое уже в общем каталоге. Устройство получало бы
+        обрубок и мусорную строку следом.
+        """
+        return ((value or "")
+                .replace("\t", " ")
+                .replace("\r\n", "\u2028")
+                .replace("\r", "\u2028")
+                .replace("\n", "\u2028"))
+
     apps_dir = os.path.join(shard_path, "apps")
     rows = []
     for name in sorted(os.listdir(apps_dir)):
@@ -166,7 +183,7 @@ def write_catalog(shard_path, base_url):
         rows.append("\t".join([
             "0",                                  # pk: no relikd id for these
             str(a.get("minOS", 0)),
-            a.get("title", ""),
+            one_line(a.get("title")),
             a.get("bundleId", ""),
             a.get("version", ""),
             "url:",                               # column 6: link is ready-made
@@ -176,13 +193,11 @@ def write_catalog(shard_path, base_url):
             "",                                   # no Apple rating, ever
             icon,
             a.get("sha256", ""),
-            a.get("author", ""),
+            one_line(a.get("author")),
             ",".join(absolute(s, base_url) for s in (a.get("shots") or [])),
-            (a.get("quote") or "").replace("\t", " "),
-            (a.get("by") or "").replace("\t", " "),
-            # Переносы строк в TSV невозможны, поэтому абзацы едут символом
-            # \u2028 и разворачиваются обратно на устройстве.
-            (a.get("desc") or "").replace("\t", " ").replace("\n", "\u2028"),
+            one_line(a.get("quote")),
+            one_line(a.get("by")),
+            one_line(a.get("desc")),
         ]))
     out = os.path.join(shard_path, "catalog.tsv")
     with open(out, "w", encoding="utf-8") as f:

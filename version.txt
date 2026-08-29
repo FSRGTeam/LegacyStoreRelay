@@ -1,9 +1,9 @@
-generation=51
-updated=2026-08-29T08:49:36Z
-catalog_sha256=e41a6ccd8271ff82091aeb52d87288df354e451ab1d2cec791382d130f82ce45
-catalog_bytes=2231
+generation=52
+updated=2026-08-29T11:43:19Z
+catalog_sha256=2984cdcde2aae74fd99d2d7f12aa26fdb89c8195c559f16f9458d1495b771433
+catalog_bytes=2405
 shards=1
-featured_sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-featured_count=0
+featured_sha256=2acf05ce71345bb629f75d3eedfba900fa9c92cb02f9d550aa6f306aa31d1650
+featured_count=1
 stats_url=http://legacystore.ru/
 ratings_url=http://legacystore.ru/ratings.tsv

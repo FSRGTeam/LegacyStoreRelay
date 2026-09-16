@@ -38,13 +38,13 @@ shards=2
 |---|---------|--------|
 | 1 | `id` | `DC1` |
 | 2 | `name` | `Основной` |
-| 3 | `base_url` | `https://porns.gitverse.page/LegacyStoreDC1/` |
+| 3 | `base_url` | `http://legacystore.ru/store/DC1/` |
 | 4 | `apps` | `12` |
 | 5 | `updated` | `2026-08-15` |
 | 6 | `sha256` | контрольная сумма `catalog.tsv` шарда |
 | 7 | `status` | `active` / `frozen` / `gone` |
 
-`frozen` — шард заполнен под лимит Pages и больше не принимает приложения, но
+`frozen` — шард заполнен под лимит и больше не принимает приложения, но
 раздаёт то, что в нём есть. Так добавляется `DC2`, и ничего не переезжает.
 
 ## `catalog-all.tsv` — предпарсенный каталог

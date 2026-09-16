@@ -38,14 +38,13 @@ RELAY_TSV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 def shard_base_url(shard_id):
     """Адрес, по которому раздаётся шард.
 
-    Источник правды — колонка base_url в relay.tsv, а не шаблон в коде. Шарды
-    живут на разных хостингах: у GitVerse квота артефактов считается на весь
-    аккаунт и списывает вес всего сайта при каждой публикации, поэтому тяжёлые
-    шарды с .ipa переехали на GitHub Pages, а релей остался там, где у iOS 5
-    проверяемая цепочка сертификатов. Зашитый шаблон это бы просто сломал.
+    Источник правды — колонка base_url в relay.tsv, а не шаблон в коде. С
+    2026-09-16 шарды раздаёт сам сайт (http://legacystore.ru/store/<id>/),
+    GitHub Pages остался запасным контуром. Зашитый шаблон это бы просто
+    сломал.
 
-    Шарда ещё нет в relay.tsv — значит он новый; отдаём прежний адрес GitVerse,
-    и build_relay.py впишет его в таблицу.
+    Шарда ещё нет в relay.tsv — значит он новый; отдаём адрес сайта по
+    шаблону, и build_relay.py впишет его в таблицу.
     """
     try:
         with open(RELAY_TSV, encoding="utf-8") as f:
@@ -57,7 +56,7 @@ def shard_base_url(shard_id):
                     return parts[2].strip()
     except OSError:
         pass
-    return "https://fsrgteam.gitverse.site/legacystore%s/" % shard_id.lower()
+    return "http://legacystore.ru/store/%s/" % shard_id
 
 
 def write_icon(blob, dest):

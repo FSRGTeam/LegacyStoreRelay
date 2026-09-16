@@ -2,13 +2,16 @@
 # -*- coding: utf-8 -*-
 """Assemble catalog-all.tsv and version.txt from the shards listed in relay.tsv.
 
-    python3 tools/build_relay.py
+    python3 tools/build_relay.py [--shards-dir PATH]
 
 Shards are sibling checkouts of this repository: ../LegacyStoreDC1 and so on.
-A shard that is not checked out locally keeps whatever the previous build put in
-the merged catalog only if --strict is off; with --strict a missing shard is an
-error, because silently publishing a catalog with a third of the apps gone is
-worse than not publishing at all.
+On the hosting the live shards are not checkouts at all — they are the served
+directories in the site root — so --shards-dir points at a directory of
+symlinks named LegacyStore<id> instead.
+A shard that is not found keeps whatever the previous build put in the merged
+catalog only if --strict is off; with --strict a missing shard is an error,
+because silently publishing a catalog with a third of the apps gone is worse
+than not publishing at all.
 """
 
 import argparse
@@ -114,11 +117,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--strict", action="store_true",
                     help="ошибка, если шард не найден локально")
+    ap.add_argument("--shards-dir", default="",
+                    help="каталог с LegacyStore<id> вместо соседей этого репозитория")
     args = ap.parse_args()
 
     rows = read_relay()
     merged = []
-    parent = os.path.dirname(HERE)
+    parent = args.shards_dir or os.path.dirname(HERE)
     changed_relay = False
 
     for r in rows:
